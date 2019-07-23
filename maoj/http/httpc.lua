@@ -7,9 +7,9 @@ local table = table
 
 local httpc = {}
 
-local function request(fd, method, host, url, recvheader, header, content)
-	local read = socket.readfunc(fd)
-	local write = socket.writefunc(fd)
+local function request(interface,method, host, url, recvheader, header, content)
+	local read = interface.read
+	local write = interface.write
 	local header_content = ""
 	if header then
 		if not header.host then
@@ -73,25 +73,57 @@ local function request(fd, method, host, url, recvheader, header, content)
 			end
 		else
 			-- no content-length, read all
-			body = body .. socket.readall(fd)
+			body = body .. interface.readall()
 		end
 	end
 
 	return code, body,header
 end
 
+local SSLCTX_CLIENT = nil
+local function gen_interface(protocol, fd)
+	if protocol == "http" then
+		return {
+			init = function() end,
+			close = function() end,
+			read = socket.readfunc(fd),
+			write = socket.writefunc(fd),
+			readall = function ()
+				return socket.readall(fd)
+			end,
+		}
+	elseif protocol == "https" then
+		local tls = require "maoj.http.tlshelper"
+		SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
+		local tls_ctx = tls.newtls("client", SSLCTX_CLIENT)
+		return {
+			init = tls.init_requestfunc(fd, tls_ctx),
+			close = tls.closefunc(tls_ctx),
+			read = tls.readfunc(fd, tls_ctx),
+			write = tls.writefunc(fd, tls_ctx),
+			readall = tls.readallfunc(fd, tls_ctx),
+		}
+	else
+		error(string.format("Invalid protocol: %s", protocol))
+	end
+end
+
 function httpc.request(method,uri,recvheader, header, content,nredirect)
 	local protcol,host,port,path = url.unpack(uri)
-	if port == "" or port == nil then
-		port = 80
+	assert(protcol and host)
+	if not port then
+		port = protcol == 'https' and 443 or 80
 	end
 	if path == '' then
 		path = '/'
 	end
 	local ip = dns.query(host)[1]
 	local fd = socket.connect(ip, port)
-	local ok , statuscode, body,h = pcall(request, fd,method, host, path, recvheader, header, content)
+	local interface = gen_interface(protcol,fd)
+	interface.init()
+	local ok , statuscode, body,h = pcall(request,interface,method, host, path, recvheader, header, content)
 	fd:close()
+	interface.close()
 	nredirect = nredirect or 0
 	if ok then
 		if string.match(tostring(statuscode),'3%d%d') and h.location and nredirect < 10 then
