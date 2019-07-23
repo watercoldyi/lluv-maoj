@@ -1,6 +1,7 @@
 local socket = require "maoj.http.socket"
 local url = require "maoj.http.url"
 local internal = require "maoj.http.internal"
+local dns = require 'maoj.dns'
 local string = string
 local table = table
 
@@ -79,19 +80,23 @@ local function request(fd, method, host, url, recvheader, header, content)
 	return code, body,header
 end
 
-function httpc.request(method, host, url, recvheader, header, content)
-	local hostname, port = host:match"([^:]+):?(%d*)$"
-	if port == "" then
+function httpc.request(method,uri,recvheader, header, content,nredirect)
+	local protcol,host,port,path = url.unpack(uri)
+	if port == "" or port == nil then
 		port = 80
-	else
-		port = tonumber(port)
 	end
-	local fd = socket.connect(hostname, port)
-	local ok , statuscode, body,h = pcall(request, fd,method, host, url, recvheader, header, content)
+	if path == '' then
+		path = '/'
+	end
+	local ip = dns.query(host)[1]
+	local fd = socket.connect(ip, port)
+	local ok , statuscode, body,h = pcall(request, fd,method, host, path, recvheader, header, content)
 	fd:close()
+	nredirect = nredirect or 0
 	if ok then
-		if statuscode == 302 and h.location then
-			return httpc.request(method,host,h.location,recvheader,header,content)
+		if string.match(tostring(statuscode),'3%d%d') and h.location and nredirect < 10 then
+			nredirect = nredirect + 1
+			return httpc.request(method,h.location,recvheader,header,content,nredirect)
 		else
 			return statuscode, body
 		end
@@ -110,7 +115,7 @@ local function escape(s)
 	end))
 end
 
-function httpc.post(host, url, form, recvheader)
+function httpc.post(url, form, recvheader)
 	local header = {
 		["content-type"] = "application/x-www-form-urlencoded"
 	}
@@ -119,7 +124,7 @@ function httpc.post(host, url, form, recvheader)
 		table.insert(body, string.format("%s=%s",escape(k),escape(v)))
 	end
 
-	return httpc.request("POST", host, url, recvheader, header, table.concat(body , "&"))
+	return httpc.request("POST",url, recvheader, header, table.concat(body , "&"))
 end
 
 return httpc

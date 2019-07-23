@@ -3,7 +3,6 @@ local socket = require 'maoj.socket'
 local _mod = {}
 
 function _mod.connect(host,port)
-    print(host,port)
     local fd,err = socket.connect(host,port)
     assert(fd,err)
     return fd
@@ -24,7 +23,7 @@ function _mod.writefunc(sock)
 end
 
 function _mod.readall(sock)
-    return sock.readall
+    return sock:readall()
 end
 
 function _mod.listen(ip,port,accept)
